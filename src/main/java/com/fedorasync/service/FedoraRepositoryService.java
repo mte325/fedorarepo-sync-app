@@ -37,7 +37,7 @@ public class FedoraRepositoryService {
 
     /**
      * Retrieves all repository IDs using Fedora 5.1 REST API.
-     * Uses pagination to handle large result sets.
+     * Makes a single call to the REST service to retrieve all objects.
      * Parses JSON-LD response to extract IDs from the 'contains' property.
      *
      * @return List of all object IDs in the repository (just the last part after the last '/')
@@ -45,75 +45,63 @@ public class FedoraRepositoryService {
      */
     public List<String> getAllRepositoryIds() throws IOException {
         List<String> ids = new ArrayList<String>();
-        int offset = 0;
-        int limit = 100;
-        boolean hasMore = true;
 
-        while (hasMore) {
-            try {
-                // Fedora 5.1 uses offset and limit parameters instead of page
-                String endpoint = String.format("/?offset=%d&limit=%d", offset, limit);
-                logger.debug("Fetching objects with offset={}, limit={}", offset, limit);
-                String response = restClient.get(endpoint);
+        try {
+            // Fedora 5.1 - make a single call to get all objects
+            String endpoint = "/";
+            logger.debug("Fetching all objects from: {}", endpoint);
+            String response = restClient.get(endpoint);
 
-                JsonNode rootNode = objectMapper.readTree(response);
-                
-                // Handle both array and object responses
-                JsonNode responseNode;
-                if (rootNode.isArray()) {
-                    logger.debug("Response is an array, extracting first element");
-                    if (rootNode.size() > 0) {
-                        responseNode = rootNode.get(0);
-                    } else {
-                        logger.debug("Array is empty");
-                        hasMore = false;
-                        continue;
-                    }
-                } else if (rootNode.isObject()) {
-                    logger.debug("Response is an object");
-                    responseNode = rootNode;
+            JsonNode rootNode = objectMapper.readTree(response);
+            
+            // Handle both array and object responses
+            JsonNode responseNode;
+            if (rootNode.isArray()) {
+                logger.debug("Response is an array, extracting first element");
+                if (rootNode.size() > 0) {
+                    responseNode = rootNode.get(0);
                 } else {
-                    logger.error("Response is neither an array nor an object");
-                    hasMore = false;
-                    continue;
+                    logger.debug("Array is empty");
+                    return ids;
                 }
+            } else if (rootNode.isObject()) {
+                logger.debug("Response is an object");
+                responseNode = rootNode;
+            } else {
+                logger.error("Response is neither an array nor an object");
+                return ids;
+            }
+            
+            // Debug: Log all keys in the response
+            logger.debug("Response keys: {}", getAllKeys(responseNode));
+            
+            // Try multiple possible property names for the contains property
+            JsonNode containsArray = findContainsProperty(responseNode);
+            
+            if (containsArray != null && containsArray.isArray() && containsArray.size() > 0) {
+                logger.debug("Found {} items in 'contains' property", containsArray.size());
                 
-                // Debug: Log all keys in the response
-                logger.debug("Response keys: {}", getAllKeys(responseNode));
-                
-                // Try multiple possible property names for the contains property
-                JsonNode containsArray = findContainsProperty(responseNode);
-                
-                if (containsArray != null && containsArray.isArray() && containsArray.size() > 0) {
-                    logger.debug("Found {} items in 'contains' property", containsArray.size());
-                    
-                    for (JsonNode item : containsArray) {
-                        // Extract the @id from each item
-                        JsonNode idNode = item.get("@id");
-                        if (idNode != null) {
-                            String fullId = idNode.asText();
-                            // Extract just the last part after the last '/'
-                            String shortId = extractIdFromUrl(fullId);
-                            if (shortId != null && !shortId.isEmpty()) {
-                                ids.add(shortId);
-                                logger.debug("Extracted ID: {}", shortId);
-                            }
+                for (JsonNode item : containsArray) {
+                    // Extract the @id from each item
+                    JsonNode idNode = item.get("@id");
+                    if (idNode != null) {
+                        String fullId = idNode.asText();
+                        // Extract just the last part after the last '/'
+                        String shortId = extractIdFromUrl(fullId);
+                        if (shortId != null && !shortId.isEmpty()) {
+                            ids.add(shortId);
+                            logger.debug("Extracted ID: {}", shortId);
                         }
                     }
-                    
-                    // Check if there are more results
-                    hasMore = containsArray.size() >= limit;
-                    offset += limit;
-                    
-                    logger.debug("Retrieved {} objects, total so far: {}", containsArray.size(), ids.size());
-                } else {
-                    logger.debug("No 'contains' property found or it's empty");
-                    hasMore = false;
                 }
-            } catch (IOException e) {
-                logger.error("Error retrieving objects with offset {}", offset, e);
-                hasMore = false;
+                
+                logger.debug("Retrieved {} objects total", ids.size());
+            } else {
+                logger.debug("No 'contains' property found or it's empty");
             }
+        } catch (IOException e) {
+            logger.error("Error retrieving objects", e);
+            throw e;
         }
 
         logger.info("Total objects retrieved: {}", ids.size());
