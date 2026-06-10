@@ -2,6 +2,7 @@ package com.fedorasync.service;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 
 import org.slf4j.Logger;
@@ -57,8 +58,11 @@ public class FedoraRepositoryService {
 
                 JsonNode responseNode = objectMapper.readTree(response);
                 
-                // Parse the JSON-LD response looking for the 'contains' property
-                JsonNode containsArray = responseNode.get("http://www.w3.org/ns/ldp#contains");
+                // Debug: Log all keys in the response
+                logger.debug("Response keys: {}", getAllKeys(responseNode));
+                
+                // Try multiple possible property names for the contains property
+                JsonNode containsArray = findContainsProperty(responseNode);
                 
                 if (containsArray != null && containsArray.isArray() && containsArray.size() > 0) {
                     logger.debug("Found {} items in 'contains' property", containsArray.size());
@@ -94,6 +98,66 @@ public class FedoraRepositoryService {
 
         logger.info("Total objects retrieved: {}", ids.size());
         return ids;
+    }
+
+    /**
+     * Finds the 'contains' property in the JSON-LD response.
+     * Tries multiple possible key variations since JSON-LD can use different formats.
+     *
+     * @param responseNode The root JSON node
+     * @return The 'contains' array, or null if not found
+     */
+    private JsonNode findContainsProperty(JsonNode responseNode) {
+        // List of possible property names for 'contains' in different JSON-LD formats
+        String[] possibleContainsKeys = {
+            "http://www.w3.org/ns/ldp#contains",  // Full namespace URI
+            "ldp:contains",                        // Prefix format
+            "contains",                            // Simple name
+            "dc:contains",                         // Dublin Core variation
+            "@contains"                            // JSON-LD context variation
+        };
+        
+        for (String key : possibleContainsKeys) {
+            if (responseNode.has(key)) {
+                logger.debug("Found 'contains' property using key: {}", key);
+                return responseNode.get(key);
+            }
+        }
+        
+        // If not found in standard places, iterate through all keys looking for one containing "contains"
+        logger.debug("Standard 'contains' keys not found, searching through all keys...");
+        Iterator<String> fieldNames = responseNode.fieldNames();
+        while (fieldNames.hasNext()) {
+            String key = fieldNames.next();
+            if (key.contains("contains")) {
+                logger.debug("Found potential 'contains' property with key: {}", key);
+                return responseNode.get(key);
+            }
+        }
+        
+        return null;
+    }
+
+    /**
+     * Gets all keys from a JSON node for debugging purposes.
+     *
+     * @param node The JSON node
+     * @return A comma-separated string of all field names
+     */
+    private String getAllKeys(JsonNode node) {
+        if (!node.isObject()) {
+            return "Not an object";
+        }
+        
+        StringBuilder keys = new StringBuilder();
+        Iterator<String> fieldNames = node.fieldNames();
+        while (fieldNames.hasNext()) {
+            if (keys.length() > 0) {
+                keys.append(", ");
+            }
+            keys.append(fieldNames.next());
+        }
+        return keys.toString();
     }
 
     /**
