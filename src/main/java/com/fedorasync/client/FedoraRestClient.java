@@ -30,6 +30,7 @@ import java.net.URISyntaxException;
 public class FedoraRestClient {
 
     private static final Logger logger = LoggerFactory.getLogger(FedoraRestClient.class);
+    private static final String DEFAULT_ACCEPT_HEADER = "application/ld+json";
 
     private final HttpClient httpClient;
     private final String baseUrl;
@@ -59,24 +60,42 @@ public class FedoraRestClient {
     }
 
     /**
-     * Performs a GET request to the Fedora repository.
+     * Performs a GET request to the Fedora repository with JSON-LD accept header.
      *
-     * @param endpoint The API endpoint (e.g., "/search?page=1&pageSize=100")
+     * @param endpoint The API endpoint (e.g., "/?offset=0&limit=100")
      * @return The response body as a string
      * @throws IOException If an error occurs during the request
      */
     public String get(String endpoint) throws IOException {
+        return get(endpoint, DEFAULT_ACCEPT_HEADER);
+    }
+
+    /**
+     * Performs a GET request to the Fedora repository with custom accept header.
+     *
+     * @param endpoint The API endpoint (e.g., "/?offset=0&limit=100")
+     * @param acceptHeader The Accept header value (e.g., "application/ld+json")
+     * @return The response body as a string
+     * @throws IOException If an error occurs during the request
+     */
+    public String get(String endpoint, String acceptHeader) throws IOException {
         String url = baseUrl + endpoint;
         logger.debug("Performing GET request to: {}", url);
 
         HttpGet httpGet = new HttpGet(url);
+        // Set Accept header to request JSON-LD format from Fedora
+        httpGet.setHeader("Accept", acceptHeader);
+        logger.debug("Set Accept header to: {}", acceptHeader);
+        
         try {
             HttpResponse response = httpClient.execute(httpGet, context);
             int statusCode = response.getStatusLine().getStatusCode();
 
             if (statusCode >= 200 && statusCode < 300) {
                 String result = EntityUtils.toString(response.getEntity());
-                logger.debug("GET request successful, response size: {} bytes", result.length());
+                logger.debug("GET request successful, response size: {} bytes, content-type: {}", 
+                    result.length(),
+                    response.getFirstHeader("Content-Type") != null ? response.getFirstHeader("Content-Type").getValue() : "unknown");
                 return result;
             } else {
                 logger.error("GET request failed with status code: {}", statusCode);
@@ -90,7 +109,7 @@ public class FedoraRestClient {
     /**
      * Performs a DELETE request to the Fedora repository.
      *
-     * @param endpoint The API endpoint (e.g., "/rest/objectId")
+     * @param endpoint The API endpoint (e.g., "/objectId")
      * @return True if the deletion was successful, false otherwise
      */
     public boolean delete(String endpoint) {
