@@ -37,8 +37,9 @@ public class FedoraRepositoryService {
     /**
      * Retrieves all repository IDs using Fedora 5.1 REST API.
      * Uses pagination to handle large result sets.
+     * Parses JSON-LD response to extract IDs from the 'contains' property.
      *
-     * @return List of all object IDs in the repository
+     * @return List of all object IDs in the repository (just the last part after the last '/')
      * @throws IOException If an error occurs during retrieval
      */
     public List<String> getAllRepositoryIds() throws IOException {
@@ -56,43 +57,34 @@ public class FedoraRepositoryService {
 
                 JsonNode responseNode = objectMapper.readTree(response);
                 
-                // Parse the RDF/XML or JSON response
-                // The response structure depends on the Accept header
-                // For simplicity, we'll look for common property patterns
-                JsonNode contains = responseNode.get("contains");
-                JsonNode children = responseNode.get("children");
-                JsonNode members = responseNode.get("members");
-                JsonNode results = responseNode.get("results");
+                // Parse the JSON-LD response looking for the 'contains' property
+                JsonNode containsArray = responseNode.get("http://www.w3.org/ns/ldp#contains");
                 
-                JsonNode itemsArray = null;
-                if (contains != null && contains.isArray()) {
-                    itemsArray = contains;
-                } else if (children != null && children.isArray()) {
-                    itemsArray = children;
-                } else if (members != null && members.isArray()) {
-                    itemsArray = members;
-                } else if (results != null && results.isArray()) {
-                    itemsArray = results;
-                }
-
-                if (itemsArray != null && itemsArray.size() > 0) {
-                    for (JsonNode item : itemsArray) {
-                        // Try to extract ID from different possible locations
-                        String id = extractIdFromNode(item);
-                        if (id != null && !id.isEmpty()) {
-                            ids.add(id);
-                            logger.debug("Found ID: {}", id);
+                if (containsArray != null && containsArray.isArray() && containsArray.size() > 0) {
+                    logger.debug("Found {} items in 'contains' property", containsArray.size());
+                    
+                    for (JsonNode item : containsArray) {
+                        // Extract the @id from each item
+                        JsonNode idNode = item.get("@id");
+                        if (idNode != null) {
+                            String fullId = idNode.asText();
+                            // Extract just the last part after the last '/'
+                            String shortId = extractIdFromUrl(fullId);
+                            if (shortId != null && !shortId.isEmpty()) {
+                                ids.add(shortId);
+                                logger.debug("Extracted ID: {}", shortId);
+                            }
                         }
                     }
                     
                     // Check if there are more results
-                    hasMore = itemsArray.size() >= limit;
+                    hasMore = containsArray.size() >= limit;
                     offset += limit;
                     
-                    logger.debug("Retrieved {} objects, total so far: {}", itemsArray.size(), ids.size());
+                    logger.debug("Retrieved {} objects, total so far: {}", containsArray.size(), ids.size());
                 } else {
+                    logger.debug("No 'contains' property found or it's empty");
                     hasMore = false;
-                    logger.debug("No more objects found");
                 }
             } catch (IOException e) {
                 logger.error("Error retrieving objects with offset {}", offset, e);
@@ -105,29 +97,24 @@ public class FedoraRepositoryService {
     }
 
     /**
-     * Extracts the ID from a JSON node.
-     * Tries multiple common property names.
+     * Extracts the ID from a full URL.
+     * Gets only the part after the last '/'.
+     * Example: http://example.com/rest/CNEAI/2f972be7-21cb-4969-abe3-07b834150d5d
+     *          -> 2f972be7-21cb-4969-abe3-07b834150d5d
+     *
+     * @param fullUrl The full URL
+     * @return The ID part (text after the last '/'), or null if not found
      */
-    private String extractIdFromNode(JsonNode node) {
-        if (node == null) return null;
-        
-        // Try common ID property names
-        String[] possibleIdProperties = {"@id", "id", "pid", "rdf:about", "uri"};
-        
-        for (String property : possibleIdProperties) {
-            if (node.has(property)) {
-                String value = node.get(property).asText();
-                if (value != null && !value.isEmpty()) {
-                    // Extract just the ID part if it's a full URI
-                    if (value.contains("/")) {
-                        return value.substring(value.lastIndexOf("/") + 1);
-                    }
-                    return value;
-                }
-            }
+    private String extractIdFromUrl(String fullUrl) {
+        if (fullUrl == null || fullUrl.isEmpty()) {
+            return null;
         }
         
-        // If no ID found, return null
+        int lastSlashIndex = fullUrl.lastIndexOf('/');
+        if (lastSlashIndex >= 0 && lastSlashIndex < fullUrl.length() - 1) {
+            return fullUrl.substring(lastSlashIndex + 1);
+        }
+        
         return null;
     }
 
