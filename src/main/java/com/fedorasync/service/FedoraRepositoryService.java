@@ -56,7 +56,27 @@ public class FedoraRepositoryService {
                 logger.debug("Fetching objects with offset={}, limit={}", offset, limit);
                 String response = restClient.get(endpoint);
 
-                JsonNode responseNode = objectMapper.readTree(response);
+                JsonNode rootNode = objectMapper.readTree(response);
+                
+                // Handle both array and object responses
+                JsonNode responseNode;
+                if (rootNode.isArray()) {
+                    logger.debug("Response is an array, extracting first element");
+                    if (rootNode.size() > 0) {
+                        responseNode = rootNode.get(0);
+                    } else {
+                        logger.debug("Array is empty");
+                        hasMore = false;
+                        continue;
+                    }
+                } else if (rootNode.isObject()) {
+                    logger.debug("Response is an object");
+                    responseNode = rootNode;
+                } else {
+                    logger.error("Response is neither an array nor an object");
+                    hasMore = false;
+                    continue;
+                }
                 
                 // Debug: Log all keys in the response
                 logger.debug("Response keys: {}", getAllKeys(responseNode));
